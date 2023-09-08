@@ -1,0 +1,69 @@
+---
+- name: Setup Development Environment
+  hosts: localhost  # Run tasks locally on the machine where Ansible is executed
+
+  tasks:
+    - name: Detect package manager
+      ansible.builtin.command: "{{ item }}"
+      with_items:
+        - "dpkg -l | awk '/^ii/ {print $2}' | grep -E '^(zsh|tmux|neovim|i3)'"
+        - "pacman -Q | awk '{print $1}' | grep -E '^(zsh|tmux|neovim|i3)'"
+      register: installed_packages
+      changed_when: false
+      failed_when: false
+
+    - name: Install required packages (apt)
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ installed_packages.results }}"
+      when: installed_packages.results | map(attribute='stdout') | list | length == 0
+      become: yes  # Only use sudo if necessary
+      become_user: root
+
+    - name: Clone dotfiles repository
+      ansible.builtin.git:
+        repo: https://github.com/sakshyam-sh/dotfiles.git
+        dest: ~/dotfiles
+        clone: yes
+      become: no  # This task doesn't require sudo privileges
+
+    - name: Load SSH key from Ansible Vault
+      ansible.builtin.include_vars:
+        file: ~/dotfiles/secrets.yml # Adjust the path to your Ansible Vault secrets file
+      no_log: yes  # Ensure the SSH key is not logged
+
+    - name: Add SSH key to authorized keys
+      ansible.builtin.copy:
+        content: "{{ vault_ssh_key }}"
+        dest: ~/.ssh/id_rsa
+        mode: '0600'
+      when: not lookup('file', '~/.ssh/id_rsa')
+
+    - name: Copy Zsh configuration
+      ansible.builtin.copy:
+        src: ~/dotfiles/zsh/.zshrc
+        dest: ~/.zshrc
+      notify: Reload Zsh  # Notify the Zsh reload handler
+
+    - name: Copy Tmux configuration
+      ansible.builtin.copy:
+        src: ~/dotfiles/tmux/.tmux.conf
+        dest: ~/.tmux.conf
+
+    - name: Copy Neovim configuration
+      ansible.builtin.copy:
+        src: ~/dotfiles/nvim/
+        dest: ~/.config/nvim/
+
+    - name: Copy i3 configuration
+      ansible.builtin.copy:
+        src: ~/dotfiles/i3/
+        dest: ~/.config/i3/
+
+    # ... Add other tasks as needed for additional configurations ...
+
+  handlers:
+    - name: Reload Zsh
+      ansible.builtin.command: source ~/.zshrc
+
